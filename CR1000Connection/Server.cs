@@ -22,6 +22,7 @@ namespace CR1000Connection
             this.password   = password;
             this.responses  = new List<String>();
             this.dataLogger = new CSIDATALOGGERLib.DataLogger();
+            initializeDataLogger();
         }
 
         public String operationResult()
@@ -34,20 +35,11 @@ namespace CR1000Connection
             return "No operations have been logged";
         }
 
-        public Boolean syncClocks(string dataLoggerName)
+        public void syncClocks(string dataLoggerName)
         {
-            // connect to server
-            // sync clocks to this datalogger
-            // check result and log it
-            return true;
-        }
-
-        public Boolean shutDownLogger(string dataLoggerName)
-        {
-            // connect to server
-            // send an empty program. Use sendProgramFile
-            // check result and log it
-            return true;
+            connect();
+            dataLogger.clockSetStart();
+            disconnect();
         }
 
         /// <summary>
@@ -59,30 +51,11 @@ namespace CR1000Connection
         /// <param name="retried">If we are retrying to send the same file. You should never use this attribute. A Boolean. Defaults to false.</param>
         public void sendProgramFile(string dataLoggerName, string programPath, bool retried = false)
         {
-            try //implement error handling for this routine : try-catch
+            try
             {
-                //Send a program to the datalogger
-                if (dataLogger.serverConnected)
-                {
-                    if (programPath == "")
-                    {
-                        logResponse("- Please specify a program to send");
-                    }
-                    else
-                    {
-                        dataLogger.programSendStart(programPath, "");
-                    }
-                }
-                else if (!retried) // Only retry once. If not, just die.
-                {
-                    connect();
-                    sendProgramFile(dataLoggerName, programPath, true);
-                }
-                else
-                {
-                    logResponse("- There was an error connecting to the server and could not send the file.");
-                }
-
+                connect();
+                dataLogger.programSendStart(programPath, "");
+                disconnect();
             }
             catch (Exception excp)
             {
@@ -90,7 +63,7 @@ namespace CR1000Connection
             }
         }
 
-        ////////////////////////////////////////////////// PRIVATE FUNCTIONS
+        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
 
         private void logResponse(string response)
         {
@@ -133,6 +106,14 @@ namespace CR1000Connection
         }
 
 
+        private void disconnect()
+        {
+            if (dataLogger.serverConnected)
+            {
+                dataLogger.serverDisconnect();
+            }
+        }
+        
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server Event Responses                                                                       //////
         // Each of these methods will be called when an event happens after using the LoggerNet library //////
@@ -195,8 +176,18 @@ namespace CR1000Connection
         }
 
         /// <summary>
+        /// This will run when we could not connect to a data logger.
+        /// </summary>
+        private void dataLoggerConnectionFailure(CSIDATALOGGERLib.logger_failure_type fail_code)
+        {
+            logResponse("- The connection to the logger was not successful. Failure code: " + fail_code);
+        }
+
+        /// <summary>
         /// This will run when a program that was being sent to the data logger is complete.
         /// This means that the program will be sent & compiled.
+        /// 
+        /// If the send action failed, we will have the response code and compile result.
         /// </summary>
         /// <param name="successful"></param>
         /// <param name="response_code"></param>
@@ -222,7 +213,7 @@ namespace CR1000Connection
             dataLogger.onServerConnectFailure += new CSIDATALOGGERLib._IDataLoggerEvents_onServerConnectFailureEventHandler(dataLoggerServerConnectionFailed);
 
             dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(dataLoggerConnected);
-            //this.dataLogger.onLoggerConnectFailure += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectFailureEventHandler(this.axDataLogger1_onLoggerConnectFailure);
+            dataLogger.onLoggerConnectFailure += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectFailureEventHandler(dataLoggerConnectionFailure);
         }
     }
 }
