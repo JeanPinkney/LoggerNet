@@ -8,11 +8,9 @@ namespace CR1000Connection
     {
         string host, port, username, password;
         List<String> responses;
-
-        public CSIDATALOGGERLib.DataLogger dataLogger;
+        private CSIDATALOGGERLib.DataLogger dataLogger;
 
         public Server() : this("localhost", "6789", "", "") { }
-
         public Server(string host, string port, string username, string password)
         {
             this.host       = host;
@@ -38,6 +36,8 @@ namespace CR1000Connection
         {
             if (!dataLogger.serverConnected)
             {
+                // First connect to the server, this function **will** connect to the datalogger
+                // specified. So, we need to hook into the event of the DATALOGGER connection.
                 dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
                 connect(dataLoggerName);
             }
@@ -68,11 +68,18 @@ namespace CR1000Connection
             }
         }
 
+
+        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
+        private void logResponse(string response)
+        {
+            responses.Add(response);
+            // System.Console.WriteLine(response);
+        }
+
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server actions                                                                               //////
         //////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        public void disconnect()
+        private void disconnect()
         {
             if (dataLogger.serverConnected)
             {
@@ -89,7 +96,7 @@ namespace CR1000Connection
         /// and the methods `dataLoggerServerConnected` (success) and `dataLoggerServerConnectedFailure`
         /// will be executed.
         /// </summary>
-        public void connect(string dataLoggerName)
+        private void connect(string dataLoggerName)
         {
             try
             {
@@ -112,20 +119,15 @@ namespace CR1000Connection
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        // API Actions                                                                                  //////
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         private void realSync()
         {
             dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
             dataLogger.clockSetStart(); // trigger the syncListener -> disconnect();
         }
-        
-        private void logResponse(string response)
-        {
-            responses.Add(response);
-            // System.Console.WriteLine(response);
-        }
-
         
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server Event Responses                                                                       //////
