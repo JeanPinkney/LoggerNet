@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 namespace CR1000Connection
@@ -10,7 +9,7 @@ namespace CR1000Connection
         string host, port, username, password;
         List<String> responses;
 
-        private CSIDATALOGGERLib.DataLogger dataLogger;
+        public CSIDATALOGGERLib.DataLogger dataLogger;
 
         public Server() : this("localhost", "6789", "", "") { }
 
@@ -37,9 +36,15 @@ namespace CR1000Connection
 
         public void syncClocks(string dataLoggerName)
         {
-            connect();
-            dataLogger.clockSetStart();
-            disconnect();
+            if (!dataLogger.serverConnected)
+            {
+                dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
+                connect(dataLoggerName);
+            }
+            else
+            {
+                dataLogger.clockSetStart();
+            }
         }
 
         /// <summary>
@@ -53,7 +58,7 @@ namespace CR1000Connection
         {
             try
             {
-                connect();
+                connect(dataLoggerName);
                 dataLogger.programSendStart(programPath, "");
                 disconnect();
             }
@@ -63,17 +68,18 @@ namespace CR1000Connection
             }
         }
 
-        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
-
-        private void logResponse(string response)
-        {
-            responses.Add(response);
-        }
-
-
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server actions                                                                               //////
         //////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        public void disconnect()
+        {
+            if (dataLogger.serverConnected)
+            {
+                dataLogger.serverDisconnect();
+            }
+        }
+
 
         /// <summary>
         /// Connect: Connects to the LoggerNet server using the params received on the
@@ -83,7 +89,7 @@ namespace CR1000Connection
         /// and the methods `dataLoggerServerConnected` (success) and `dataLoggerServerConnectedFailure`
         /// will be executed.
         /// </summary>
-        private void connect()
+        public void connect(string dataLoggerName)
         {
             try
             {
@@ -92,6 +98,7 @@ namespace CR1000Connection
                 dataLogger.serverPort = Convert.ToInt16(this.port);
                 dataLogger.serverLogonName = this.username;
                 dataLogger.serverLogonPassword = this.password;
+                dataLogger.loggerName = dataLoggerName;
 
                 //Connect to the Loggernet server. If the connection
                 //succeeds then the event OnServerConnectStarted() will be
@@ -105,14 +112,20 @@ namespace CR1000Connection
             }
         }
 
+        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
 
-        private void disconnect()
+        private void realSync()
         {
-            if (dataLogger.serverConnected)
-            {
-                dataLogger.serverDisconnect();
-            }
+            dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
+            dataLogger.clockSetStart(); // trigger the syncListener -> disconnect();
         }
+        
+        private void logResponse(string response)
+        {
+            responses.Add(response);
+            // System.Console.WriteLine(response);
+        }
+
         
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server Event Responses                                                                       //////
@@ -128,6 +141,7 @@ namespace CR1000Connection
             {
                 //Indicate success for server connect
                 logResponse("+ Successfully connected to LoggerNet server " + host);
+                dataLogger.loggerConnectStart(CSIDATALOGGERLib.logger_priority_type.lp_priority_high);
             }
             catch (Exception excp)
             {
@@ -155,15 +169,18 @@ namespace CR1000Connection
                 if (successful)
                 {
                     logResponse("+ Successfully synced clocks to " + current_date + ".");
+                    // throw event Clock Sync Ok
                 }
                 else
                 {
-                    logResponse("- Could not get/set clock from data logger. Error code: " + response_code  + ".");
+                    logResponse("- Could not get/set clock from data logger. Error code: " + response_code + ".");
+                    // throw event Clock Sync Failed
                 }
             }
             catch (Exception excp)
             {
                 logResponse("- CSI Datalogger onClockComplete Event : ERROR" + excp.Source + ": " + excp.Message);
+                // throw event Clock Sync Failed
             }
         }
 
@@ -172,7 +189,7 @@ namespace CR1000Connection
         /// </summary>
         private void dataLoggerConnected()
         {
-            logResponse("+ Successfully connected to data logger.");
+            logResponse("+ Successfully connected to data logger " + dataLogger.loggerName + "");
         }
 
         /// <summary>
@@ -180,7 +197,7 @@ namespace CR1000Connection
         /// </summary>
         private void dataLoggerConnectionFailure(CSIDATALOGGERLib.logger_failure_type fail_code)
         {
-            logResponse("- The connection to the logger was not successful. Failure code: " + fail_code);
+            logResponse("- The connection to the logger " + dataLogger.loggerName +" was not successful. Failure code: " + fail_code);
         }
 
         /// <summary>

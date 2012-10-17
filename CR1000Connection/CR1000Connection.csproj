@@ -33,7 +33,7 @@
   <ItemGroup>
     <Reference Include="Interop.CSIDATALOGGERLib, Version=1.0.0.0, Culture=neutral, processorArchitecture=x86">
       <SpecificVersion>False</SpecificVersion>
-      <EmbedInteropTypes>False</EmbedInteropTypes>
+      <EmbedInteropTypes>True</EmbedInteropTypes>
       <HintPath>..\Interop.CSIDATALOGGERLib.dll</HintPath>
     </Reference>
     <Reference Include="System" />
