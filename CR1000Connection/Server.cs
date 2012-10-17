@@ -4,8 +4,24 @@ using System.Text;
 
 namespace CR1000Connection
 {
+    public class ClockSyncArgs : EventArgs
+    {
+        public ClockSyncArgs(bool successful, CSIDATALOGGERLib.clock_outcome_type response_code, DateTime current_date)
+        {
+            this.successful     = successful;
+            this.current_date   = current_date;
+            this.response_code  = (int)response_code;
+        }
+        public bool successful;
+        public int response_code;
+        public DateTime current_date;
+    }
+
     public class Server
     {
+        public delegate void ClockSyncHandler(object sender, ClockSyncArgs cs);
+        public event ClockSyncHandler ClockSync;
+
         string host, port, username, password;
         List<String> responses;
         private CSIDATALOGGERLib.DataLogger dataLogger;
@@ -73,7 +89,7 @@ namespace CR1000Connection
         private void logResponse(string response)
         {
             responses.Add(response);
-            // System.Console.WriteLine(response);
+            //System.Console.WriteLine(response);
         }
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -143,6 +159,8 @@ namespace CR1000Connection
             {
                 //Indicate success for server connect
                 logResponse("+ Successfully connected to LoggerNet server " + host);
+
+                // Now that we are connected to LoggerNet, connect to the DataLogger
                 dataLogger.loggerConnectStart(CSIDATALOGGERLib.logger_priority_type.lp_priority_high);
             }
             catch (Exception excp)
@@ -150,7 +168,6 @@ namespace CR1000Connection
                 logResponse("- CSI Datalogger OnServerConnectStarted Event : ERROR" + excp.Source + ": " + excp.Message);
             }
         }
-
 
         /// <summary>
         /// This will run when connecting to LoggerNet fails
@@ -178,6 +195,8 @@ namespace CR1000Connection
                     logResponse("- Could not get/set clock from data logger. Error code: " + response_code + ".");
                     // throw event Clock Sync Failed
                 }
+                ClockSyncArgs csArgs = new ClockSyncArgs(successful, response_code, current_date);
+                ClockSync(this, csArgs);
             }
             catch (Exception excp)
             {
