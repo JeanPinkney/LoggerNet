@@ -17,12 +17,29 @@ namespace CR1000Connection
         public DateTime current_date;
     }
 
+    public class SentFileArgs : EventArgs
+    {
+        public SentFileArgs(bool successful, CSIDATALOGGERLib.prog_send_outcome_type response_code, string compile_result)
+        {
+            this.successful     = successful;
+            this.response_code  = (int) response_code;
+            this.compile_result = compile_result;
+        }
+        public bool successful;
+        public int response_code;
+        public string compile_result;
+    }
+
     public class Server
     {
         public delegate void ClockSyncHandler(object sender, ClockSyncArgs cs);
         public event ClockSyncHandler ClockSync;
 
+        public delegate void SentFileHandler(object sender, SentFileArgs sf);
+        public event SentFileHandler SentFile;
+
         string host, port, username, password;
+        string programPath, programName;
         List<String> responses;
         private CSIDATALOGGERLib.DataLogger dataLogger;
 
@@ -70,17 +87,21 @@ namespace CR1000Connection
         /// <param name="dataLoggerName">The data logger name. A String.</param>
         /// <param name="programPath">The path of the file to send. A String.</param>
         /// <param name="retried">If we are retrying to send the same file. You should never use this attribute. A Boolean. Defaults to false.</param>
-        public void sendProgramFile(string dataLoggerName, string programPath, bool retried = false)
+        public void sendProgramFile(string dataLoggerName, string programPath, string programName)
         {
-            try
+            this.programPath = programPath;
+            this.programName = programName;
+
+            if (!dataLogger.serverConnected)
             {
+                // First connect to the server, this function **will** connect to the datalogger
+                // specified. So, we need to hook into the event of the DATALOGGER connection.
+                dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSendFile);
                 connect(dataLoggerName);
-                dataLogger.programSendStart(programPath, "");
-                disconnect();
             }
-            catch (Exception excp)
+            else
             {
-                logResponse("- CSI Datalogger Send Program Button : ERROR" + excp.Source + ": " + excp.Message);
+                dataLogger.programSendStart(programPath, programName);
             }
         }
 
@@ -142,9 +163,15 @@ namespace CR1000Connection
         private void realSync()
         {
             dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
-            dataLogger.clockSetStart(); // trigger the syncListener -> disconnect();
+            dataLogger.clockSetStart(); // trigger the syncListener -> disconnect
         }
-        
+
+        private void realSendFile()
+        {
+            dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSendFile);
+            dataLogger.programSendStart(programPath, programName); // trigger the programComplete -> disconnect
+        }
+
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server Event Responses                                                                       //////
         // Each of these methods will be called when an event happens after using the LoggerNet library //////
@@ -240,6 +267,8 @@ namespace CR1000Connection
             {
                 logResponse("- Could not send the program. Response code: " + response_code+ ". Compile result: " + compile_result + ".");
             }
+            SentFileArgs fsArgs = new SentFileArgs(successful, response_code, compile_result);
+            SentFile(this, fsArgs);
         }
         
         private void initializeDataLogger()
