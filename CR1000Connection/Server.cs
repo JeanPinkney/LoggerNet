@@ -17,6 +17,7 @@ namespace CR1000Connection
         List<String> responses;
         private CSIDATALOGGERLib.DataLogger dataLogger;
 
+        public Server(string host) : this(host, "6789", "", "") { }
         public Server() : this("localhost", "6789", "", "") { }
         public Server(string host, string port, string username, string password)
         {
