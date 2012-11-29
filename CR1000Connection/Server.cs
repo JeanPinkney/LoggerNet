@@ -6,16 +6,18 @@ namespace CR1000Connection
 {
     public class Server
     {
-        public delegate void ClockSyncHandler(object sender, ClockSyncArgs cs);
-        public event ClockSyncHandler ClockSync;
-
-        public delegate void SentFileHandler(object sender, SentFileArgs sf);
+        public delegate void SentFileHandler(object sender, CoraScriptResultArgs sf);
         public event SentFileHandler SentFile;
 
+        public delegate void ClockSetHandler(object sender, CoraScriptResultArgs sf);
+        public event ClockSetHandler ClockSet;
+
         string host, port, username, password;
-        string programPath, programName;
+        string programPath;
+        string dataLoggerName;
         List<String> responses;
-        private CSIDATALOGGERLib.DataLogger dataLogger;
+
+        CsiCoraScriptLib.CsiCoraScriptControl coraScript;
 
         public Server(string host) : this(host, "6789", "", "") { }
         public Server() : this("localhost", "6789", "", "") { }
@@ -26,7 +28,7 @@ namespace CR1000Connection
             this.username   = username;
             this.password   = password;
             this.responses  = new List<String>();
-            this.dataLogger = new CSIDATALOGGERLib.DataLogger();
+            this.coraScript = new CsiCoraScriptLib.CsiCoraScriptControl();
             initializeDataLogger();
         }
 
@@ -42,16 +44,16 @@ namespace CR1000Connection
 
         public void syncClocks(string dataLoggerName)
         {
-            if (!dataLogger.serverConnected)
+            this.dataLoggerName = dataLoggerName;
+            if (!coraScript.serverConnected)
             {
-                // First connect to the server, this function **will** connect to the datalogger
-                // specified. So, we need to hook into the event of the DATALOGGER connection.
-                dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
-                connect(dataLoggerName);
+                coraScript.onServerConnectStarted +=
+                    new CsiCoraScriptLib._ICsiCoraScriptControlEvents_onServerConnectStartedEventHandler(realSync);
+                connect();
             }
             else
             {
-                dataLogger.clockSetStart();
+                realSync();
             }
         }
 
@@ -61,42 +63,86 @@ namespace CR1000Connection
         /// </summary>
         /// <param name="dataLoggerName">The data logger name. A String.</param>
         /// <param name="programPath">The path of the file to send. A String.</param>
-        /// <param name="retried">If we are retrying to send the same file. You should never use this attribute. A Boolean. Defaults to false.</param>
-        public void sendProgramFile(string dataLoggerName, string programPath, string programName)
+        public void sendProgramFile(string dataLoggerName, string programPath)
         {
-            this.programPath = programPath;
-            this.programName = programName;
+            this.programPath    = programPath;
+            this.dataLoggerName = dataLoggerName;
 
-            if (!dataLogger.serverConnected)
+            if (!coraScript.serverConnected)
             {
-                // First connect to the server, this function **will** connect to the datalogger
-                // specified. So, we need to hook into the event of the DATALOGGER connection.
-                dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSendFile);
-                connect(dataLoggerName);
+                coraScript.onServerConnectStarted +=
+                    new CsiCoraScriptLib._ICsiCoraScriptControlEvents_onServerConnectStartedEventHandler(realSendFile);
+                connect();
             }
             else
             {
-                dataLogger.programSendStart(programPath, programName);
+                realSendFile();
             }
         }
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        // API Actions                                                                                  //////
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////// PRIVATE FUNCTIONS
-        private void logResponse(string response)
+        private void realSync()
         {
-            responses.Add(response);
-            //System.Console.WriteLine(response);
+            string command = "clock-set " + this.dataLoggerName;
+            string response;
+
+            coraScript.onServerConnectStarted -= new CsiCoraScriptLib._ICsiCoraScriptControlEvents_onServerConnectStartedEventHandler(realSync);
+            response = coraScript.executeScript(command, 0);
+            ClockSet(this, new CoraScriptResultArgs(response));
+        }
+
+        private void realSendFile()
+        {
+            string command = "send-file " + this.dataLoggerName + " " + this.programPath + " --run-now=true run-on-power-up=true";
+            string response;
+
+            coraScript.onServerConnectStarted -= new CsiCoraScriptLib._ICsiCoraScriptControlEvents_onServerConnectStartedEventHandler(realSendFile);
+            response = coraScript.executeScript(command, 0);
+            SentFile(this, new CoraScriptResultArgs(response));
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        // Server Event Responses                                                                       //////
+        // Each of these methods will be called when an event happens after using the LoggerNet library //////
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// <summary>
+        /// This will run if the connection to LoggerNet was successful. It will log a message with information.
+        /// </summary>
+        private void loggerNetServerConnected()
+        {
+            try //implement error handling for this routine : try-catch
+            {
+                //Indicate success for server connect
+                logResponse("+ Successfully connected to LoggerNet server " + host);
+            }
+            catch (Exception excp)
+            {
+                logResponse("- LoggerNet Connection Event : ERROR" + excp.Source + ": " + excp.Message);
+            }
+        }
+        
+        private void initializeDataLogger()
+        {
+            coraScript.onServerConnectStarted += new CsiCoraScriptLib._ICsiCoraScriptControlEvents_onServerConnectStartedEventHandler(loggerNetServerConnected);
         }
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         // Server actions                                                                               //////
         //////////////////////////////////////////////////////////////////////////////////////////////////////
+        private void logResponse(string response)
+        {
+            responses.Add(response);
+        }
+
         private void disconnect()
         {
-            if (dataLogger.serverConnected)
+            if (coraScript.serverConnected)
             {
-                dataLogger.serverDisconnect();
+                coraScript.serverDisconnect();
             }
         }
 
@@ -109,154 +155,26 @@ namespace CR1000Connection
         /// and the methods `dataLoggerServerConnected` (success) and `dataLoggerServerConnectedFailure`
         /// will be executed.
         /// </summary>
-        private void connect(string dataLoggerName)
+        private void connect()
         {
             try
             {
-                //Set the connection parameters
-                dataLogger.serverName = this.host;
-                dataLogger.serverPort = Convert.ToInt16(this.port);
-                dataLogger.serverLogonName = this.username;
-                dataLogger.serverLogonPassword = this.password;
-                dataLogger.loggerName = dataLoggerName;
+                coraScript.Enabled = true;
+                coraScript.serverName = this.host;
+                coraScript.serverPort = Convert.ToInt16(this.port);
+                coraScript.serverLogonName = this.username;
+                coraScript.serverLogonPassword = this.password;
 
-                //Connect to the Loggernet server. If the connection
-                //succeeds then the event OnServerConnectStarted() will be
-                //called. Otherwise, the event onServerConnectFailure()
-                //will be called.
-                dataLogger.serverConnect();
+                if (!coraScript.serverConnected)
+                {
+                    coraScript.serverConnect();
+                    logResponse("Corascript control has submitted connect command...");
+                }
             }
             catch (Exception excp)
             {
                 logResponse("- Connection Error. Could not connect. Info -> " + excp.Source + ": " + excp.Message);
             }
-        }
-
-
-        //////////////////////////////////////////////////////////////////////////////////////////////////////
-        // API Actions                                                                                  //////
-        //////////////////////////////////////////////////////////////////////////////////////////////////////
-        private void realSync()
-        {
-            dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSync);
-            dataLogger.clockSetStart(); // trigger the syncListener -> disconnect
-        }
-
-        private void realSendFile()
-        {
-            dataLogger.onLoggerConnectStarted -= new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(realSendFile);
-            dataLogger.programSendStart(programPath, programName); // trigger the programComplete -> disconnect
-        }
-
-        //////////////////////////////////////////////////////////////////////////////////////////////////////
-        // Server Event Responses                                                                       //////
-        // Each of these methods will be called when an event happens after using the LoggerNet library //////
-        //////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        /// <summary>
-        /// This will run if the connection to LoggerNet was successful. It will log a message with information.
-        /// </summary>
-        private void dataLoggerServerConnected()
-        {
-            try //implement error handling for this routine : try-catch
-            {
-                //Indicate success for server connect
-                logResponse("+ Successfully connected to LoggerNet server " + host);
-
-                // Now that we are connected to LoggerNet, connect to the DataLogger
-                dataLogger.loggerConnectStart(CSIDATALOGGERLib.logger_priority_type.lp_priority_high);
-            }
-            catch (Exception excp)
-            {
-                logResponse("- CSI Datalogger OnServerConnectStarted Event : ERROR" + excp.Source + ": " + excp.Message);
-            }
-        }
-
-        /// <summary>
-        /// This will run when connecting to LoggerNet fails
-        /// </summary>
-        /// <param name="failure_code"></param>
-        private void dataLoggerServerConnectionFailed(CSIDATALOGGERLib.server_failure_type failure_code)
-        {
-            logResponse("- The connection to the LoggerNet server failed. Failure code: " + failure_code);
-        }
-
-        /// <summary>
-        /// This will run when whaaat?
-        /// </summary>
-        private void dataLoggerClockCompleted(bool successful, CSIDATALOGGERLib.clock_outcome_type response_code, DateTime current_date)
-        {
-            try
-            {
-                if (successful)
-                {
-                    logResponse("+ Successfully synced clocks to " + current_date + ".");
-                    // throw event Clock Sync Ok
-                }
-                else
-                {
-                    logResponse("- Could not get/set clock from data logger. Error code: " + response_code + ".");
-                    // throw event Clock Sync Failed
-                }
-                ClockSyncArgs csArgs = new ClockSyncArgs(successful, response_code, current_date);
-                ClockSync(this, csArgs);
-            }
-            catch (Exception excp)
-            {
-                logResponse("- CSI Datalogger onClockComplete Event : ERROR" + excp.Source + ": " + excp.Message);
-                // throw event Clock Sync Failed
-            }
-        }
-
-        /// <summary>
-        /// This will run when we connect to a data logger.
-        /// </summary>
-        private void dataLoggerConnected()
-        {
-            logResponse("+ Successfully connected to data logger " + dataLogger.loggerName + "");
-        }
-
-        /// <summary>
-        /// This will run when we could not connect to a data logger.
-        /// </summary>
-        private void dataLoggerConnectionFailure(CSIDATALOGGERLib.logger_failure_type fail_code)
-        {
-            logResponse("- The connection to the logger " + dataLogger.loggerName +" was not successful. Failure code: " + fail_code);
-        }
-
-        /// <summary>
-        /// This will run when a program that was being sent to the data logger is complete.
-        /// This means that the program will be sent & compiled.
-        /// 
-        /// If the send action failed, we will have the response code and compile result.
-        /// </summary>
-        /// <param name="successful"></param>
-        /// <param name="response_code"></param>
-        /// <param name="compile_result"></param>
-        private void dataLoggerProgramSentComplete(bool successful, CSIDATALOGGERLib.prog_send_outcome_type response_code, string compile_result)
-        {
-            if (successful)
-            {
-                logResponse("+ Successfully sent the program. Complete event.");
-            }
-            else
-            {
-                logResponse("- Could not send the program. Response code: " + response_code+ ". Compile result: " + compile_result + ".");
-            }
-            SentFileArgs fsArgs = new SentFileArgs(successful, response_code, compile_result);
-            SentFile(this, fsArgs);
-        }
-        
-        private void initializeDataLogger()
-        {
-            dataLogger.onProgramSendComplete += new CSIDATALOGGERLib._IDataLoggerEvents_onProgramSendCompleteEventHandler(dataLoggerProgramSentComplete);
-            dataLogger.onClockComplete += new CSIDATALOGGERLib._IDataLoggerEvents_onClockCompleteEventHandler(dataLoggerClockCompleted);
-
-            dataLogger.onServerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onServerConnectStartedEventHandler(dataLoggerServerConnected);
-            dataLogger.onServerConnectFailure += new CSIDATALOGGERLib._IDataLoggerEvents_onServerConnectFailureEventHandler(dataLoggerServerConnectionFailed);
-
-            dataLogger.onLoggerConnectStarted += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectStartedEventHandler(dataLoggerConnected);
-            dataLogger.onLoggerConnectFailure += new CSIDATALOGGERLib._IDataLoggerEvents_onLoggerConnectFailureEventHandler(dataLoggerConnectionFailure);
         }
     }
 }
